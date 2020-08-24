@@ -1,0 +1,25 @@
+
+> #======== Model and settings configuration
+> #
+> 
+> # model instantiation -----------------------------------------------
+> # set defaul flags
+> FLA .... [TRUNCATED] 
+
+> # model configuration
+> model <- keras_model_sequential() %>%
++   layer_dense(units = FLAGS$units_1, input_shape = V, 
++               activation =  .... [TRUNCATED] 
+
+> fit <- model %>% fit(
++   x = x_train_s, y = y_train,
++   validation_data = list(x_val_s, y_val),
++   epochs = 100,
++   batch_size = FLAGS$bs,
++   v .... [TRUNCATED] 
+
+> # store accuracy on test set for each run
+> score <- model %>% evaluate(
++   scale(x_test), y_test,
++   verbose = 0
++ )
