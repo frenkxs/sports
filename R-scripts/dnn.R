@@ -7,12 +7,15 @@ library(dplyr)
 library(tfruns)
 library(gridExtra)
 library(jsonlite)
-
+library(googledrive)
 
 # load helper functions
 source('helpers.R')
 
-# load data
+# download data to working directory
+public_file <- drive_get(as_id("1xkLIiZwh4N2H1n8n_jmGMoARXmbU7Pi3"))
+
+drive_download(public_file)
 load('data_activity_recognition.RData')
 
 # check the dimensions
