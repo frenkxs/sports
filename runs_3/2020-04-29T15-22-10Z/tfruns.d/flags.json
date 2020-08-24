@@ -1,9 +1,0 @@
-{
-  "dropout": 0,
-  "units_1": 512,
-  "units_2": 64,
-  "lambda": 0.0183,
-  "bs": 22,
-  "lr": 0.01,
-  "patience": 20
-}
