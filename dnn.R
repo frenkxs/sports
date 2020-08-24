@@ -6,10 +6,11 @@ library(viridis)
 library(dplyr)
 library(tfruns)
 library(gridExtra)
+library(jsonlite)
 
 
-# load custom ggplot theme for plots
-source('theme_pv.R')
+# load helper functions
+source('helpers.R')
 
 # load data
 load('data_activity_recognition.RData')
@@ -23,8 +24,9 @@ dim(x_train)
 x_train <- array_reshape(x_train, c(nrow(x_train), 125 * 45)) 
 x_test <- array_reshape(x_test, c(nrow(x_test), 125 * 45))
 
-
-### Visualisation of the classes ##########
+#############################################################################
+### Visualisation of the classes ############################################
+#############################################################################
 
 # reduce the dimension of the data with PCA
 x_test_pca <- prcomp(x_test)
@@ -36,15 +38,19 @@ prop <- cumsum(x_test_pca$sdev^2) / sum(x_test_pca$sdev^2)
 prop[2]
 
 # plot the first two principal components (around 31 % of the variance)
-ggplot(as.data.frame(x_test_pca$x[, c(1:2)]), aes(x = x_test_pca$x[, 1], y = x_test_pca$x[, 2])) +
+ggplot(as.data.frame(x_test_pca$x[, c(1:2)]), aes(x = x_test_pca$x[, 1], 
+                                                  y = x_test_pca$x[, 2])) +
   geom_point(aes(colour = y_test)) +
   theme_pv() +
   scale_colour_viridis_d(option = 'C', name = 'Type of activity:') +
-  labs(title = 'Sport activities reduced to 2D (~30 % of variance)', y = "PC2", x = "PC1") +
+  labs(title = 'Sport activities reduced to \ntwo dimensions', 
+       y = "PC2", x = "PC1") +
   theme(legend.position = 'right', 
         legend.text = element_text(size = 12)) 
 
 #####
+
+######## Data preparation ####################################################
 
 # see the range of the value
 range(x_train)
@@ -62,6 +68,8 @@ y_train <- y_train - 1
 y_train <- to_categorical(y_train) 
 y_test <- to_categorical(y_test)
 
+######## Validation-test split ###############################################
+
 # split the test data in two halves: one for validation
 # and the other for actual testing
 set.seed(12)
@@ -78,10 +86,16 @@ y_test <- y_test[test, ]
 V <- ncol(x_train)
 N <- nrow(x_train)
 
+# check if the classes are distributed equaly in the test and val data
+mean(colSums(y_val))
+mean(colSums(y_test))
 
-######################################################################
-################ Selecting data preprocessing methods ################
-######################################################################
+sd(colSums(y_val))
+sd(colSums(y_test))
+
+###############################################################################
+################ Selecting data preprocessing methods #########################
+###############################################################################
 
 # normalisation
 normalise <- function(x){
@@ -100,7 +114,7 @@ x_val_s <- scale(x_val)
 # dnn to select the data preprocessing method
 model <- keras_model_sequential() %>%
   layer_dense(units = 512, input_shape = V, activation = "relu", name = "layer_1") %>%
-  layer_dense(units = 128, activation = "relu", name = "layer_3") %>%
+  layer_dense(units = 128, activation = "relu", name = "layer_2") %>%
   layer_dense(units = ncol(y_train), activation = "softmax", name = "layer_out") %>%
   
   compile(
@@ -131,33 +145,11 @@ for(i in 1:3){
 
 ###### Plotting #############
 
-data_pt <- function(fits, coln) {
-  n <- length(fits)
-  
-  # create empty dataframe to store the performance metrics
-  learn <- data.frame(matrix(ncol = length(coln), nrow = 100))
-  
-  for (i in 1:n) {
-    # bind the accuracy metrics together
-    learn[, c((i * 2) - 1, i * 2)] <- cbind(fits[[i]]$metrics$accuracy, fits[[i]]$metrics$val_accuracy)
-  }
-  
-  # add the column names
-  colnames(learn) <- coln
-  
-  #id variable for position in matrix 
-  learn$id <- 1:nrow(learn) 
-  
-  #reshape to long format
-  plot_learn <- melt(learn, id.var = 'id')
-  
-  plot_learn
-}
-
 coln <- c('Identity_train', 'Identity_val',
           'Normalize_train', 'normalise_val',
           'Standardize_train', 'Standardize_val')
 
+# see the helpers.R file for details for data_pt
 plot_learn_c <- data_pt(fits, coln = coln)
 
 # colour palette
@@ -170,12 +162,13 @@ ggplot(plot_learn_c, aes(x = id, y = value, group = variable,
               se = FALSE, size = 1) + #, linetype = "dashed") +
   #stat_smooth(data = plot_learn_c_v, method = 'loess', geom = 'line', 
               #se = FALSE, size = 1) +
-  scale_y_log10(limits = c(0.8, 1)) +
+  scale_y_log10(limits = c(0.8, 1), breaks = seq(0.80, 1, by = 0.04)) +
   theme_pv() +
   scale_colour_manual(values = col) +
   scale_linetype_manual(values = c(2, 1, 2, 1, 2, 1)) +
   geom_point(alpha = 0.3) +
-  labs(title = 'Learning curves for three different data preprocessing methods', y = "Accuracy", x = "Epochs") +
+  labs(title = 'Learning curves for three different \ndata preprocessing methods', 
+       y = "Accuracy", x = "Epochs") +
   theme(legend.position = "bottom", 
         legend.title = element_blank(),
         legend.text = element_text(size = 12))
@@ -186,7 +179,7 @@ ggplot(plot_learn_c, aes(x = id, y = value, group = variable,
 ################ Selecting number of layers ##########################
 ######################################################################
 
-# 2 - 4 - 6 with decreasing number of units
+# Model with 2 - 4 - 6 layers, each with decreasing number of units
 
 # 3 dnn with different number of layers
 model_2 <- keras_model_sequential() %>%
@@ -230,7 +223,7 @@ model_6 <- keras_model_sequential() %>%
 
 
 # initialise list to store the learning curve data
-fits <- list()
+fits_a <- list()
 
 # run three models
 
@@ -240,7 +233,7 @@ fit <- model_2 %>% fit(
   validation_data = list(x_val_s, y_val),
   epochs = 100,
   verbose = 1)
-fits[[1]] <- fit
+fits_a[[1]] <- fit
   
 # 4 layrers
 fit <- model_4 %>% fit(
@@ -248,7 +241,7 @@ fit <- model_4 %>% fit(
   validation_data = list(x_val_s, y_val),
   epochs = 100,
   verbose = 1)
-fits[[2]] <- fit
+fits_a[[2]] <- fit
 
 # 4 layers
 fit <- model_6 %>% fit(
@@ -256,53 +249,33 @@ fit <- model_6 %>% fit(
   validation_data = list(x_val_s, y_val),
   epochs = 100,
   verbose = 1)
-fits[[3]] <- fit
+fits_a[[3]] <- fit
 
 
 ###### Plotting #############
 
-data_pt <- function(fits, coln) {
-  n <- length(fits)
-  
-  # create empty dataframe to store the performance metrics
-  learn <- data.frame(matrix(ncol = length(coln), nrow = 100))
-  
-  for (i in 1:n) {
-    # bind the accuracy metrics together
-    learn[, c((i * 2) - 1, i * 2)] <- cbind(fits[[i]]$metrics$accuracy, fits[[i]]$metrics$val_accuracy)
-  }
-  
-  # add the column names
-  colnames(learn) <- coln
-  
-  #id variable for position in matrix 
-  learn$id <- 1:nrow(learn) 
-  
-  #reshape to long format
-  plot_learn <- melt(learn, id.var = 'id')
-  
-  plot_learn
-}
-
-coln <- c('2_layers_train', '2_layers_val',
+coln_a <- c('2_layers_train', '2_layers_val',
           '4_layers_train', '4_layers_val',
           '6_layers_train', '6_layers_val')
 
-plot_learn_c <- data_pt(fits, coln = coln) 
+# see the helpers.R file for details for data_pt
+plot_learn_c_a <- data_pt(fits_a, coln = coln_a) 
 
 # colour palette
 col <- rep(viridis(3, option = 'C', end = 0.8), each = 2) 
 
 # plot train and validation learning curves
-ggplot(plot_learn_c, aes(x = id, y = value, group = variable, 
+ggplot(plot_learn_c_a, aes(x = id, y = value, group = variable, 
                          colour = variable, linetype = variable)) +
-  stat_smooth(data = plot_learn_c, method = 'loess', geom = 'line', se = FALSE, size = 1) + 
+  stat_smooth(data = plot_learn_c_a, method = 'loess', geom = 'line', 
+              se = FALSE, size = 1) + 
   scale_y_log10(limits = c(0.93, 1), breaks = seq(0.92, 1, by = 0.02)) +
   theme_pv() +
   scale_colour_manual(values = col) +
   scale_linetype_manual(values = c(2, 1, 2, 1, 2, 1)) +
   geom_point(alpha = 0.3) +
-  labs(title = 'Learning curves for models with three different number of layers', y = "Accuracy (log scale)", x = "Epochs") +
+  labs(title = 'Learning curves for models with three \ndifferent number of layers', 
+       y = "Accuracy (log)", x = "Epochs") +
   theme(legend.position = "bottom", 
         legend.title = element_blank(),
         legend.text = element_text(size = 12))
@@ -310,20 +283,20 @@ ggplot(plot_learn_c, aes(x = id, y = value, group = variable,
 # we go with 2 layers
 
 ######################################################################
-################ Hyperparameter tuning ###############################
+################ Hyperparameter tuning - rough tuning ################
 ######################################################################
 
-# run ---------------------------------------------------------------
+# run #########
 dropout_set <- c(0, 0.2, 0.4)
 units_1_set <- c(512, 256)
 units_2_set <- c(256, 128, 64)
 lambda_set <- c(0, exp( seq(-9, -4, length = 3) )) 
 bs_set <- floor(c(0.003, 0.01, 0.02) * N)
 lr_set <- c(0.001, 0.005, 0.01)
-patience_set <- c(5, 10, 20)
+patience_set <- c(10, 20)
 
 runs <- tuning_run("model_conf.R",
-                   runs_dir = "runs",
+                   runs_dir = "runs_3",
                    flags = list(
                      dropout = dropout_set,
                      units_1 = units_1_set,
@@ -332,106 +305,42 @@ runs <- tuning_run("model_conf.R",
                      bs = bs_set,
                      lr = lr_set,
                      patience = patience_set),
-                   sample = 0.02)
-
-########### plotting ############
-library(jsonlite)
-
-# extract results
-read_metrics <- function(path, files = NULL)
-  # 'path' is where the runs are --> e.g. "path/to/runs"
-{
-  path <- paste0(path, "/")
-  if ( is.null(files) ) files <- list.files(path) 
-  n <- length(files)
-  out <- vector("list", n)
-  for ( i in 1:n ) {
-    dir <- paste0(path, files[i], "/tfruns.d/")
-    out[[i]] <- jsonlite::fromJSON(paste0(dir, "metrics.json")) 
-    out[[i]]$flags <- jsonlite::fromJSON(paste0(dir, "flags.json")) 
-    out[[i]]$evaluation <- jsonlite::fromJSON(paste0(dir, "evaluation.json"))
-  }
-  return(out) 
-}
+                   sample = 0.03)
 
 
-out <- read_metrics("runs")
+# get the worst models and their parameters
+worst <- ls_runs(runs_dir = "runs_3", order = metric_val_accuracy)
+
+# select only the relevant paramenters
+worst <- s[, c(2, 4, 8:14, 18)] 
+worst[order(worst$eval_accuracy)[1:10], ] 
+
+
+########### extract results ############ 
+
+run_3 <- read_metrics("runs_3")
 
 # extract validation accuracy and plot learning curve
-met <- sapply(met, "[[", "val_accuracy")
+acc_3 <- as.data.frame(sapply(run_3, "[[", "val_accuracy"))
 
 # extract the parameters values for each run
-param <- as.data.frame(sapply(out, "[[", "flags"))
-
-# ggplot needs data frame
-met <- as.data.frame(met)
-
-# get the columns index of the best runs
-met_sort <- apply(met[, -39], 2, max, na.rm = TRUE)
-best <- order(met_sort)  
-
-# select the best five runs and store them separately from the rest
-met_b <- met[, tail(best, 5)]
-
-# select the rest
-met <- met[, best[1:(length(best) - 5)]]
+param_3 <- as.data.frame(sapply(run_3, "[[", "flags"))
+param_3 <- apply(param_3, 2, unlist)
 
 # add id variable for easy melting
-met$id <- c(1:100)
-met_b$id <- c(1:100)
+acc_3$id <- c(1:100)
 
 # convert to long format for easy plotting
-met <- melt(met, id.var = 'id')
-met_b <- melt(met_b, id.var = 'id')
-
-col <- viridis(2, option = 'C', end = 0.8) 
-
-
-ggplot(met, aes(x = id, y = value, group = variable)) +
-  stat_smooth(data = met_b, method = 'loess', geom = 'line', se = FALSE, size = 1,
-              colour = col[1]) +
-  geom_point(data = met_b, alpha = 0.3, colour = col[1]) +
-  stat_smooth(method = 'loess', geom = 'line', se = FALSE, size = 0.2,
-              colour = col[2]) +
-  geom_point(data = met, alpha = 0.3, colour = col[2]) +
-  scale_y_log10(limits = c(0.82, 1), breaks = seq(0.82, 1, by = 0.04)) +
-  theme_pv() +
-  labs(title = 'Learning curves for models with different hyperparameters', y = "Accuracy (log scale)", x = "Epochs")
-  
-
-
-res <- ls_runs(metric_val_accuracy > 0.93,
-               runs_dir = "runs", order = metric_val_accuracy)
-
-res <- res[, c(2, 4, 8:14)] 
-
-# show best models ordered on test accuracy
-res[order(res$eval_accuracy, decreasing = TRUE)[1:10], ] 
-
-####################################################
-############ Additional plotting ###################
-
-# plot the learning curves colour coded by hyberparameter values considered
-
-out <- read_metrics("runs")
-
-# extract hyperparameter configuration
-param <- sapply(out, "[[", "flags")
-
-# extract validation accuracy and save as data frame
-out <- as.data.frame(sapply(out, "[[", "val_accuracy"))
-
-# flatten the data frame
-param <- apply(param, 2, unlist)
+acc_3 <- melt(acc_3, id.var = 'id')
 
 # extact column names for each hyperparameter
-dropout <- as.factor(param['dropout', ])
-lambda <- as.factor(param['lambda', ])
-batch <- as.factor(param['bs', ])
-lr <- as.factor(param['lr', ])
-patience <- as.factor(param['patience', ])
-units_1 <- as.factor(param['units_1', ])
-units_2 <- as.factor(param['units_2', ])
+dropout <- as.factor(param_3['dropout', ])
+lambda <- as.factor(param_3['lambda', ])
+batch <- as.factor(param_3['bs', ])
+lr <- as.factor(param_3['lr', ])
+patience <- as.factor(param_3['patience', ])
+units_1 <- as.factor(param_3['units_1', ])
+units_2 <- as.factor(param_3['units_2', ])
 
 # convert to long format
 dropout <- rep(dropout, each = 100)
@@ -443,108 +352,248 @@ units_1 <- rep(units_1, each = 100)
 units_2 <- rep(units_2, each = 100)
 
 # add the hyperparameter values to the metrics data frame
-met$dropout <- dropout
-met$lambda <- lambda
-met$batch <- batch
-met$lr <- lr
-met$patience <- patience
-met$units_1 <- units_1
-met$units_2 <- units_2
+acc_3$dropout <- dropout
+acc_3$lambda <- lambda
+acc_3$batch <- batch
+acc_3$lr <- lr
+acc_3$patience <- patience
+acc_3$units_1 <- units_1
+acc_3$units_2 <- units_2
 
-############
+# colour palette
+col <- viridis(2, option = 'C', end = 0.8) 
+
+
+
+############  plotting ###################
+
+# plot the learning curves colour coded by hyberparameter values considered
+
 
 # dropout
-dr <- ggplot(met, aes(x = id, y = value, group = variable, colour = dropout)) +
-  geom_point(data = met, alpha = 0.2) +
-  stat_smooth(method = 'loess', geom = 'line', 
-              se = FALSE, size = 0.7) +
+dr <- ggplot(acc_3, aes(x = id, y = value, group = variable, colour = dropout)) +
+  geom_point(data = acc_3, alpha = 0.2) +
+  stat_smooth(method = 'loess', geom = 'line', se = FALSE, size = 0.7) +
   scale_colour_viridis_d(name = 'Dropout rate:', option = 'C', end = 0.9) +
-  scale_y_log10(limits = c(0.82, 1), breaks = seq(0.82, 1, by = 0.04)) +
+  scale_y_continuous(limits = c(0.52, 1), breaks = seq(0.52, 1, by = 0.08)) +
   theme_pv() +
-  labs(title = 'Dropout rate', y = "Accuracy (log scale)", x = "Epochs") +
+  labs(title = 'Dropout rate', y = "Accuracy (log)", x = "Epochs") +
   theme(legend.position = "bottom", 
         legend.text = element_text(size = 12))
 
 
 # batch size
-bs <- ggplot(met, aes(x = id, y = value, group = variable, colour = batch)) +
-  geom_point(data = met, alpha = 0.2) +
+bs <- ggplot(acc_3, aes(x = id, y = value, group = variable, colour = batch)) +
+  geom_point(data = acc_3, alpha = 0.2) +
   stat_smooth(method = 'loess', geom = 'line', 
               se = FALSE, size = 0.7) +
   scale_colour_viridis_d(name = 'Batch size:', option = 'C', end = 0.9) +
-  scale_y_log10(limits = c(0.82, 1), breaks = seq(0.82, 1, by = 0.04)) +
+  scale_y_continuous(limits = c(0.52, 1), breaks = seq(0.52, 1, by = 0.08)) +
   theme_pv() +
-  labs(title = 'Batch size', y = "Accuracy (log scale)", x = "Epochs") +
+  labs(title = 'Batch size', y = "Accuracy (log)", x = "Epochs") +
   theme(legend.position = "bottom", 
         legend.text = element_text(size = 12))
 
 
 # learning rate
-ler <- ggplot(met, aes(x = id, y = value, group = variable, colour = lr)) +
-  geom_point(data = met, alpha = 0.2) +
+ler <- ggplot(acc_3, aes(x = id, y = value, group = variable, colour = lr)) +
+  geom_point(data = acc_3, alpha = 0.2) +
   stat_smooth(method = 'loess', geom = 'line', 
               se = FALSE, size = 0.7) +
   scale_colour_viridis_d(name = 'Learning rate:', option = 'C', end = 0.9) +
-  scale_y_log10(limits = c(0.82, 1), breaks = seq(0.82, 1, by = 0.04)) +
+  scale_y_log10(limits = c(0.52, 1), breaks = seq(0.52, 1, by = 0.08)) +
   theme_pv() +
-  labs(title = 'Learning rate', y = "Accuracy (log scale)", x = "Epochs") +
+  labs(title = 'Learning rate', y = "Accuracy (log)", x = "Epochs") +
   theme(legend.position = "bottom", 
         legend.text = element_text(size = 12))
 
 
 # lambda
-lam <- ggplot(met, aes(x = id, y = value, group = variable, colour = lambda)) +
-  geom_point(data = met, alpha = 0.2) +
-  stat_smooth(method = 'loess', geom = 'line', 
-              se = FALSE, size = 0.7) +
+lam <- ggplot(acc_3, aes(x = id, y = value, group = variable, colour = lambda)) +
+  geom_point(data = acc_3, alpha = 0.2) +
+  stat_smooth(method = 'loess', geom = 'line', se = FALSE, size = 0.7) +
   scale_colour_viridis_d(name = 'Lambda:', option = 'C', end = 0.9) +
-  scale_y_log10(limits = c(0.82, 1), breaks = seq(0.82, 1, by = 0.04)) +
+  scale_y_continuous(limits = c(0.52, 1), breaks = seq(0.52, 1, by = 0.08)) +
   theme_pv() +
-  labs(title = 'Lambda', y = "Accuracy (log scale)", x = "Epochs") +
+  labs(title = 'Lambda', y = "Accuracy (log)", x = "Epochs") +
   theme(legend.position = "bottom", 
         legend.text = element_text(size = 12))
 
 # patience
-pat <- ggplot(met, aes(x = id, y = value, group = variable, colour = patience)) +
-  geom_point(data = met, alpha = 0.2) +
-  stat_smooth(method = 'loess', geom = 'line', 
-              se = FALSE, size = 0.7) +
+pat <- ggplot(acc_3, aes(x = id, y = value, group = variable, colour = patience)) +
+  geom_point(data = acc_3, alpha = 0.2) +
+  stat_smooth(method = 'loess', geom = 'line', se = FALSE, size = 0.7) +
   scale_colour_viridis_d(name = 'Patience:', option = 'C', end = 0.9) +
-  scale_y_log10(limits = c(0.82, 1), breaks = seq(0.82, 1, by = 0.04)) +
+  scale_y_continuous(limits = c(0.52, 1), breaks = seq(0.52, 1, by = 0.08)) +
   theme_pv() +
-  labs(title = 'Patience', y = "Accuracy (log scale)", x = "Epochs") +
+  labs(title = 'Patience', y = "Accuracy (log)", x = "Epochs") +
   theme(legend.position = "bottom", 
         legend.text = element_text(size = 12))
 
 # units first layer
-u_1 <- ggplot(met, aes(x = id, y = value, group = variable, colour = units_1)) +
-  geom_point(data = met, alpha = 0.2) +
-  stat_smooth(method = 'loess', geom = 'line', 
-              se = FALSE, size = 0.7) +
-  scale_colour_viridis_d(name = 'Number of units: 1st layer:', option = 'C', end = 0.9) +
-  scale_y_log10(limits = c(0.82, 1), breaks = seq(0.82, 1, by = 0.04)) +
+u_1 <- ggplot(acc_3, aes(x = id, y = value, group = variable, colour = units_1)) +
+  geom_point(data = acc_3, alpha = 0.2) +
+  stat_smooth(method = 'loess', geom = 'line', se = FALSE, size = 0.7) +
+  scale_colour_viridis_d(name = 'Number of units:\n1st layer:', option = 'C', end = 0.9) +
+  scale_y_continuous(limits = c(0.52, 1), breaks = seq(0.52, 1, by = 0.08)) +
   theme_pv() +
-  labs(title = 'Number of units: 1st layer:', y = "Accuracy (log scale)", x = "Epochs") +
+  labs(title = 'Number of units:\n1st layer', y = "Accuracy (log)", x = "Epochs") +
   theme(legend.position = "bottom", 
         legend.text = element_text(size = 12))
 
 # units second layer
-u_2 <- ggplot(met, aes(x = id, y = value, group = variable, colour = units_2)) +
-  geom_point(data = met, alpha = 0.2) +
+u_2 <- ggplot(acc_3, aes(x = id, y = value, group = variable, colour = units_2)) +
+  geom_point(data = acc_3, alpha = 0.2) +
   stat_smooth(method = 'loess', geom = 'line', 
               se = FALSE, size = 0.7) +
-  scale_colour_viridis_d(name = 'Number of units: 2nd layer', option = 'C', end = 0.9) +
-  scale_y_log10(limits = c(0.82, 1), breaks = seq(0.82, 1, by = 0.04)) +
+  scale_colour_viridis_d(name = 'Number of units:\n2nd layer', option = 'C', end = 0.9) +
+  scale_y_continuous(limits = c(0.52, 1), breaks = seq(0.52, 1, by = 0.08)) +
   theme_pv() +
-  labs(title = 'Number of units: 2nd layer:', y = "Accuracy (log scale)", x = "Epochs") +
+  labs(title = 'Number of units:\n2nd layer', y = "Accuracy (log)", x = "Epochs") +
   theme(legend.position = "bottom", 
         legend.text = element_text(size = 12))
 ##########
 
 # Plotting multiple plots
-grid.arrange(dr, bs, ler, lam)
-grid.arrange(pat, u_1, u_2, widths = c(1, 1),
+grid.arrange(dr, pat, ler, lam, u_1, u_2)
+grid.arrange(u_1, u_2, widths = c(1, 1),
              layout_matrix = rbind(c(1, 2), c(3, NA)))
 
 
-                      
+######################################################################
+################ Hyperparameter tuning - fine tuning #################
+######################################################################
+
+dropout_set <- c(0, 0.2, 0.4)
+lambda_set <- c(0, 1e-04) 
+bs_set <- floor(c(0.003, 0.01, 0.02) * N)
+lr_set <- c(0.001, 0.0005)
+
+
+runs_2 <- tuning_run("model_conf_2.R",
+                   runs_dir = "runs_4",
+                   flags = list(
+                     dropout = dropout_set,
+                     lambda = lambda_set,
+                     bs = bs_set,
+                     lr = lr_set))
+
+# get the worst models and their parameters
+best <- ls_runs(runs_dir = "runs_4", order = eval_accuracy)
+
+# select only the relevant paramenters
+best <- best[, c(2, 7:11, 15)] 
+
+
+# plot all learning curves 
+
+# extract validation accuracy and loss and save as data frame
+run_4 <- read_metrics("runs_4")
+acc_4 <- as.data.frame(sapply(run_4, "[[", "val_accuracy"))
+loss_4 <- as.data.frame(sapply(run_4, "[[", "val_loss"))
+
+# extract evaluation metrics
+eval <- as.data.frame(sapply(run_4, "[[", "evaluation"))
+eval <- apply(eval, 2, unlist)
+eval <- eval['accuracy', ]
+
+eval_ord <- order(eval, decreasing = TRUE)
+
+acc_4_best <- acc_4[, eval_ord[1:10]]
+acc_4 <- acc_4[, - eval_ord[1:10]]
+
+loss_4_best <- loss_4[, eval_ord[1:10]]
+loss_4 <- loss_4[, - eval_ord[1:10]]
+
+# add id variable for easy melting
+acc_4$id <- c(1:100)
+acc_4_best$id <- c(1:100)
+
+loss_4$id <- c(1:100)
+loss_4_best$id <- c(1:100)
+
+# convert to long format for easy plotting
+acc_4 <- melt(acc_4, id.var = 'id')
+loss_4 <- melt(loss_4, id.var = 'id')
+acc_4_best <- melt(acc_4_best, id.var = 'id')
+loss_4_best <- melt(loss_4_best, id.var = 'id')
+
+
+########### plotting ############ 
+
+# colour palette
+col <- viridis(2, option = 'C', end = 0.8) 
+
+# accuracy
+accu <- ggplot(acc_4, aes(x = id, y = value, group = variable)) +
+  geom_point(data = acc_4, alpha = 0.2, colour = col[2]) +
+  stat_smooth(method = 'loess', geom = 'line', se = FALSE, size = 0.3, 
+              colour = col[2]) +
+  geom_point(data = acc_4_best, alpha = 0.2, colour = col[1]) +
+  stat_smooth(data = acc_4_best, method = 'loess', geom = 'line', se = FALSE, 
+              size = 0.7, colour = col[1]) +
+  scale_y_log10(limits = c(0.92, 1), breaks = seq(0.92, 1, by = 0.04)) +
+  theme_pv() +
+  labs(title = 'Validation accuracy for 38 models', 
+       y = "Accuracy (log)", x = "Epochs") +
+  theme(legend.position = "bottom", 
+        legend.text = element_text(size = 12))
+
+
+# accuracy
+loss <- ggplot(loss_4, aes(x = id, y = value, group = variable)) +
+  geom_point(data = loss_4, alpha = 0.2, colour = col[2]) +
+  stat_smooth(method = 'loess', geom = 'line', se = FALSE, 
+              size = 0.3, colour = col[2]) +
+  geom_point(data = loss_4_best, alpha = 0.2, colour = col[1]) +
+  stat_smooth(data = loss_4_best, method = 'loess', geom = 'line', 
+              se = FALSE, size = 0.7, colour = col[1]) +
+  scale_y_log10(limits = c(0.04, 1)) +
+  theme_pv() +
+  labs(title = 'Validation loss for 38 models', y = "Loss (log)", x = "Epochs") +
+  theme(legend.position = "bottom", 
+        legend.text = element_text(size = 12))
+
+# Plotting multiple plots
+grid.arrange(accu, loss, nrow = 1)
+
+
+
+
+# plotting the validation and training accuracy for the final model
+
+# extract the training and validation data
+final_val <- as.data.frame(sapply(run_4, "[[", "val_accuracy"))
+final_train <- as.data.frame(sapply(run_4, "[[", "accuracy"))
+
+# select the best model
+final_val <- as.data.frame(final_val[, 29])
+final_train <- as.data.frame(final_train[, 29])
+
+final <- cbind(final_val, final_train)
+
+# add id variable for easy melting
+final$id <- c(1:100)
+
+# add a column name
+names(final)[1] <- 'validation'
+names(final)[2] <- 'training'
+
+final <- melt(final, id.var = 'id')
+
+# final plotting
+ggplot(final, aes(x = id, y = value, group = variable, colour = variable)) +
+  stat_smooth(method = 'loess', geom = 'line', se = FALSE, size = 1) +
+  geom_point(alpha = 0.5) +
+  scale_colour_viridis_d(option = 'C', end = 0.9) +
+  scale_y_log10(limits = c(0.92, 1), breaks = seq(0.92, 1, by = 0.02)) +
+  theme_pv() +
+  xlim(0, 75) +
+  labs(title = 'Training and validation learning curves \nfor the final model', 
+       y = "Accuracy (log)", x = "Epochs") +
+  theme(legend.position = "bottom", 
+        legend.title = element_blank(),
+        legend.text = element_text(size = 12))
+
+
+##########
